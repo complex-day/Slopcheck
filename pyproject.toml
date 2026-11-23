@@ -13,5 +13,10 @@ dependencies = [
     "tree-sitter-python",
 ]
 
+[project.optional-dependencies]
+dev = [
+    "pytest",
+]
+
 [project.scripts]
 slopcheck = "slopcheck.cli:main"
