@@ -73,3 +73,26 @@ def test_changed_lines_filtering():
         str(fixture_path), source, changed_lines=set()
     )
     assert len(violations_empty) == 0
+
+
+def test_obvious_comment_with_utf8_bom():
+    source_bytes = (
+        b"\xef\xbb\xbf# calculate total\n"
+        b"def calculate_total(a, b):\n"
+        b"    return a + b\n"
+    )
+    violations = check_obvious_comments("test_bom.py", source_bytes)
+    assert len(violations) == 1
+    assert violations[0].line == 1
+    assert violations[0].rule_id == "obvious-comment"
+    assert "calculate_total" in violations[0].message
+
+    source_str = (
+        "\ufeff# calculate total\n"
+        "def calculate_total(a, b):\n"
+        "    return a + b\n"
+    )
+    violations_str = check_obvious_comments("test_bom.py", source_str)
+    assert len(violations_str) == 1
+    assert violations_str[0].line == 1
+

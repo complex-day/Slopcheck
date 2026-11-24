@@ -77,3 +77,14 @@ def test_node_text_utf8_and_emoji():
 
     assert node_text(comment_node, source_bytes) == "# 🚀 Special comment with café & emojis"
     assert node_text(string_node, source_bytes) == '"✨ Python 3.10+ ✨"'
+
+
+def test_parse_source_strips_utf8_bom():
+    tree_str, bytes_str = parse_source("\ufeffx = 42\n")
+    assert bytes_str == b"x = 42\n"
+    assert tree_str.root_node.type == "module"
+
+    tree_bytes, bytes_bytes = parse_source(b"\xef\xbb\xbfx = 42\n")
+    assert bytes_bytes == b"x = 42\n"
+    assert tree_bytes.root_node.type == "module"
+
