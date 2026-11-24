@@ -5,12 +5,36 @@ build-backend = "setuptools.build_meta"
 [project]
 name = "slopcheck"
 version = "0.1.0"
-description = "A minimal code quality CLI tool."
+description = "100% offline CLI tool scanning staged git diffs for AI code smells using Tree-sitter."
 readme = "README.md"
-requires-python = ">=3.10"
-dependencies = [
+requires-python = ">=3.11"
+license = {text = "MIT"}
+authors = [
+    {name = "Raja"},
+]
+keywords = [
+    "linter",
+    "git",
     "tree-sitter",
-    "tree-sitter-python",
+    "ast",
+    "cli",
+    "static-analysis",
+]
+classifiers = [
+    "Development Status :: 4 - Beta",
+    "Environment :: Console",
+    "Intended Audience :: Developers",
+    "License :: OSI Approved :: MIT License",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Programming Language :: Python :: 3.13",
+    "Programming Language :: Python :: 3.14",
+    "Topic :: Software Development :: Quality Assurance",
+]
+dependencies = [
+    "tree-sitter>=0.25.0",
+    "tree-sitter-python>=0.25.0",
 ]
 
 [project.optional-dependencies]
@@ -20,3 +44,6 @@ dev = [
 
 [project.scripts]
 slopcheck = "slopcheck.cli:main"
+
+[tool.setuptools.packages.find]
+where = ["src"]

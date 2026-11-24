@@ -1,0 +1,7 @@
+- id: slopcheck
+  name: slopcheck
+  description: Detect AI-generated code slop in staged Python git diffs (100% offline)
+  entry: slopcheck
+  language: python
+  types: [python]
+  pass_filenames: false
