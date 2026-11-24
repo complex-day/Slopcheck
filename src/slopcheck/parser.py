@@ -7,7 +7,10 @@ PARSER = Parser(PY_LANGUAGE)
 
 
 def parse_source(source: str | bytes) -> tuple[Tree, bytes]:
-    source_bytes = source.encode("utf-8") if isinstance(source, str) else source
+    if isinstance(source, str):
+        source_bytes = source.lstrip("\ufeff").encode("utf-8")
+    else:
+        source_bytes = source.removeprefix(b"\xef\xbb\xbf")
     tree = PARSER.parse(source_bytes)
     return tree, source_bytes
 
