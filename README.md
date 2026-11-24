@@ -75,7 +75,7 @@ def parse_config(path: str):
 
 Install from PyPI:
 ```bash
-pip install slopcheck
+pip install git-slopcheck
 ```
 
 Or install locally for development:
