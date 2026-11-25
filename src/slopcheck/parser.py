@@ -1,3 +1,4 @@
+from functools import lru_cache
 from pathlib import Path
 from tree_sitter import Language, Node, Parser, Query, QueryCursor, Tree
 import tree_sitter_javascript as tsjavascript
@@ -79,13 +80,18 @@ def parse_file(
     return parse_source(path.read_bytes(), language=resolved_language)
 
 
+@lru_cache(maxsize=64)
+def _compile_query(language: str, query_str: str) -> Query:
+    lang = _get_language(language)
+    return Query(lang, query_str)
+
+
 def run_query(
     tree: Tree,
     query_str: str,
     language: str = "python",
 ) -> dict[str, list[Node]]:
-    lang = _get_language(language)
-    query = Query(lang, query_str)
+    query = _compile_query(language, query_str)
     cursor = QueryCursor(query)
     return cursor.captures(tree.root_node)
 
@@ -95,8 +101,7 @@ def run_matches(
     query_str: str,
     language: str = "python",
 ) -> list[tuple[int, dict[str, list[Node]]]]:
-    lang = _get_language(language)
-    query = Query(lang, query_str)
+    query = _compile_query(language, query_str)
     cursor = QueryCursor(query)
     return cursor.matches(tree.root_node)
 
