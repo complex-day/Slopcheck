@@ -1,6 +1,16 @@
 # slopcheck
 
-A 100% offline, zero-cost Python CLI tool that scans `git diff --cached` using Tree-sitter AST analysis to catch AI-generated code slop before you commit.
+A 100% offline CLI tool that scans `git diff --cached` using Tree-sitter AST analysis to catch AI-generated code slop before you commit.
+
+## Free vs. Pro
+
+- **Free (100% Offline, Forever):** Python (`.py`) staged diff scanning across all 4 detection rules (`obvious-comment`, `swallowed-exception`, `micro-wrapper`, `filler-docstring`) + pre-commit hook support.
+- **Pro (`slopcheck activate <LICENSE_KEY>` — 14-day offline grace cache):**
+  - Multi-language support for JavaScript & TypeScript (`.js`, `.jsx`, `.mjs`, `.cjs`, `.ts`, `.mts`, `.cts`, `.tsx`)
+  - Safe auto-cleanup with `slopcheck --fix` (auto-removes `obvious-comment` and `filler-docstring` and re-stages modified files)
+  - Custom project rules via `.slopcheck.toml` (`disabled_rules`, `exclude`, `threshold`, `max_statements`)
+
+---
 
 ## Features & Detection Rules
 
@@ -98,8 +108,32 @@ slopcheck
 # Scan staged changes in a specific repository root
 slopcheck --repo /path/to/repo
 
+# Pro: Auto-remove safe AI slop (obvious comments & filler docstrings) and re-stage
+slopcheck --fix
+
+# Pro: Manage your offline license (14-day grace cache)
+slopcheck activate <LICENSE_KEY>
+slopcheck status
+slopcheck deactivate
+
 # Check version
 slopcheck --version
+```
+
+### Configuration (`.slopcheck.toml`, Pro)
+
+Create a `.slopcheck.toml` file in your repository root to customize rules and exclusions:
+
+```toml
+[slopcheck]
+disabled_rules = ["filler-docstring"]
+exclude = ["migrations/", "vendor/*", "tests/fixtures/*"]
+
+[rules.obvious_comment]
+threshold = 0.70
+
+[rules.micro_wrapper]
+max_statements = 2
 ```
 
 ### Sample Output
@@ -122,9 +156,9 @@ slopcheck: Clean! Scanned 2 staged file(s) with 0 violations.
 
 | Exit Code | Meaning |
 | :---: | :--- |
-| `0` | Clean: No violations detected, or no staged Python files to check. |
+| `0` | Clean: No violations detected, or no staged Python or JS/TS files to check. |
 | `1` | Violations: One or more code smell violations detected in staged diff. |
-| `2` | Error: Git execution failed or directory is not a Git repository. |
+| `2` | Error: Git execution failed, invalid `.slopcheck.toml`, license error, or Pro feature required. |
 
 ---
 
@@ -135,7 +169,7 @@ Add `slopcheck` as a pre-commit hook in your `.pre-commit-config.yaml`:
 ```yaml
 repos:
   - repo: https://github.com/complex-day/Slopcheck
-    rev: v0.1.0
+    rev: v0.2.0
     hooks:
       - id: slopcheck
 ```

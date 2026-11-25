@@ -94,7 +94,7 @@ def test_cli_version(capsys):
     assert exc_info.value.code == 0
     captured = capsys.readouterr()
     assert f"slopcheck {__version__}" in captured.out
-    assert "slopcheck 0.1.1" in captured.out
+    assert "slopcheck 0.2.0" in captured.out
 
 
 def test_cli_non_git_repo(tmp_path: Path, capsys):
