@@ -10,7 +10,7 @@ def _run_fix_mode(repo_root: str | None) -> int:
     summary = fix_staged(repo_root=repo_root)
 
     if summary.files_scanned == 0:
-        print("slopcheck: No staged Python files to check.")
+        print("slopcheck: No staged Python or JS/TS files to check.")
         return 0
 
     for path in summary.skipped_unstaged:
@@ -73,7 +73,7 @@ def main(argv: list[str] | None = None) -> int:
         return 2
 
     if files_scanned == 0:
-        print("slopcheck: No staged Python files to check.")
+        print("slopcheck: No staged Python or JS/TS files to check.")
         return 0
 
     if not violations:

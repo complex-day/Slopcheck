@@ -63,7 +63,7 @@ def test_cli_no_staged_files(tmp_path: Path, capsys):
     captured = capsys.readouterr()
 
     assert exit_code == 0
-    assert "slopcheck: No staged Python files to check." in captured.out
+    assert "slopcheck: No staged Python or JS/TS files to check." in captured.out
 
 
 def test_cli_clean_file(tmp_path: Path, capsys):
@@ -261,7 +261,7 @@ def test_cli_config_exclude_all_staged_skips_repo_walk(
 
     assert not called
     assert exit_code == 0
-    assert "slopcheck: No staged Python files to check." in captured.out
+    assert "slopcheck: No staged Python or JS/TS files to check." in captured.out
 
 
 def test_cli_config_custom_threshold_and_max_statements(tmp_path: Path, capsys):
@@ -504,9 +504,9 @@ def test_cli_fix_skips_fix_loop_when_fixable_rules_disabled(
     def fail_if_called(*_args, **_kwargs):
         nonlocal called
         called = True
-        raise AssertionError("fix_python_source should not be called")
+        raise AssertionError("fix_source should not be called")
 
-    monkeypatch.setattr(runner, "fix_python_source", fail_if_called)
+    monkeypatch.setattr(runner, "fix_source", fail_if_called)
 
     exit_code = main(["--repo", str(tmp_path), "--fix"])
     captured = capsys.readouterr()
@@ -515,3 +515,125 @@ def test_cli_fix_skips_fix_loop_when_fixable_rules_disabled(
     assert exit_code == 1
     assert "swallowed-exception" in captured.out
     assert "1 violation(s) remaining that require manual review." in captured.out
+
+
+# ---------------------------------------------------------------------------
+# JS/TS end-to-end tests
+# ---------------------------------------------------------------------------
+
+DIRTY_TS = """\
+/** Helper method to calculate the total amount. */
+// Calculate total
+function calculateTotal(a: number, b: number): number {
+    try {
+        return a + b;
+    } catch (e) {
+        // swallowed
+    }
+    return 0;
+}
+
+function _tinyHelper(x: number): number {
+    return x + 1;
+}
+
+function runAll(): number {
+    return calculateTotal(1, _tinyHelper(2));
+}
+"""
+
+
+def test_cli_scans_staged_ts_file_all_rules(tmp_path: Path, capsys):
+    init_repo(tmp_path)
+    ts_file = tmp_path / "service.ts"
+    ts_file.write_text(DIRTY_TS, encoding="utf-8")
+    subprocess.run(["git", "add", "service.ts"], cwd=tmp_path, check=True)
+
+    exit_code = main(["--repo", str(tmp_path)])
+    captured = capsys.readouterr()
+
+    assert exit_code == 1
+    assert "obvious-comment" in captured.out
+    assert "filler-docstring" in captured.out
+    assert "swallowed-exception" in captured.out
+    assert "micro-wrapper" in captured.out
+    assert "slopcheck: Found 4 violation(s) across 1 staged file(s)." in captured.out
+
+
+def test_cli_fix_ts_file_removes_safe_slop_leaves_exception(tmp_path: Path, capsys):
+    init_repo(tmp_path)
+    ts_file = tmp_path / "service.ts"
+    ts_file.write_text(
+        "/**\n"
+        " * Helper method to compute the total.\n"
+        " */\n"
+        "// Calculate total\n"
+        "function calculateTotal(a: number, b: number): number {\n"
+        "    try {\n"
+        "        return a + b;\n"
+        "    } catch (e) {}\n"
+        "    return 0;\n"
+        "}\n",
+        encoding="utf-8",
+    )
+    subprocess.run(["git", "add", "service.ts"], cwd=tmp_path, check=True)
+
+    exit_code = main(["--repo", str(tmp_path), "--fix"])
+    captured = capsys.readouterr()
+
+    assert exit_code == 1
+    assert "slopcheck: Auto-fixed 2 issue(s) across 1 file(s) and re-staged." in captured.out
+    assert "swallowed-exception" in captured.out
+    assert "1 violation(s) remaining that require manual review." in captured.out
+
+    fixed_text = ts_file.read_text(encoding="utf-8")
+    assert "// Calculate total" not in fixed_text
+    assert "Helper method to compute the total" not in fixed_text
+    assert "try {" in fixed_text
+    assert subprocess.run(["git", "diff", "--quiet", "--", "service.ts"], cwd=tmp_path).returncode == 0
+
+
+def test_cli_mixed_py_and_ts_staged_files(tmp_path: Path, capsys):
+    init_repo(tmp_path)
+    py_file = tmp_path / "app.py"
+    py_file.write_text(
+        '"""This module is responsible for math."""\n'
+        "# Calculate total\n"
+        "def calculate_total():\n"
+        "    return 1\n",
+        encoding="utf-8",
+    )
+    ts_file = tmp_path / "service.ts"
+    ts_file.write_text(
+        "/** Helper method to calculate total. */\n"
+        "function calculateTotal(a: number, b: number): number {\n"
+        "    return a + b;\n"
+        "}\n",
+        encoding="utf-8",
+    )
+    subprocess.run(
+        ["git", "add", "app.py", "service.ts"], cwd=tmp_path, check=True
+    )
+
+    exit_code = main(["--repo", str(tmp_path)])
+    captured = capsys.readouterr()
+
+    assert exit_code == 1
+    assert "app.py" in captured.out
+    assert "service.ts" in captured.out
+    assert "obvious-comment" in captured.out
+    assert "filler-docstring" in captured.out
+    assert "slopcheck: Found 3 violation(s) across 2 staged file(s)." in captured.out
+
+
+def test_cli_ignores_non_supported_staged_files(tmp_path: Path, capsys):
+    init_repo(tmp_path)
+    readme = tmp_path / "README.md"
+    readme.write_text("# Calculate total\n", encoding="utf-8")
+    subprocess.run(["git", "add", "README.md"], cwd=tmp_path, check=True)
+
+    exit_code = main(["--repo", str(tmp_path)])
+    captured = capsys.readouterr()
+
+    assert exit_code == 0
+    assert "slopcheck: No staged Python or JS/TS files to check." in captured.out

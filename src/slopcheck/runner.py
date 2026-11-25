@@ -3,14 +3,20 @@ import fnmatch
 from pathlib import Path
 import subprocess
 from slopcheck.config import SlopcheckConfig, VALID_RULE_IDS, load_config
-from slopcheck.diff_parser import GitDiffError, parse_staged_diff
-from slopcheck.fixer import fix_python_source
+from slopcheck.diff_parser import GitDiffError, parse_staged_diff, SUPPORTED_EXTENSIONS
+from slopcheck.fixer import fix_source
+from slopcheck.parser import detect_language
 from slopcheck.rules import (
     Violation,
     check_filler_docstrings,
+    check_js_filler_docstrings,
+    check_js_micro_wrappers,
+    check_js_obvious_comments,
+    check_js_swallowed_exceptions,
     check_micro_wrappers,
     check_obvious_comments,
     check_swallowed_exceptions,
+    count_js_repo_calls,
     count_repo_calls,
 )
 
@@ -79,7 +85,7 @@ def _load_filtered_staged(
     start_dir = Path(repo_root).resolve() if repo_root else Path.cwd().resolve()
     root = get_git_toplevel(start_dir)
     config = load_config(root)
-    staged_map = parse_staged_diff(cwd=root)
+    staged_map = parse_staged_diff(cwd=root, extensions=SUPPORTED_EXTENSIONS)
 
     if config.exclude:
         staged_map = {
@@ -91,6 +97,83 @@ def _load_filtered_staged(
     return root, config, staged_map
 
 
+def _scan_file_violations(
+    rel_path: str,
+    source_bytes: bytes,
+    changed_lines: set[int],
+    config: SlopcheckConfig,
+    py_call_counts: dict[str, int],
+    js_call_counts: dict[str, int],
+) -> list[Violation]:
+    lang = detect_language(rel_path)
+    if lang is None:
+        return []
+
+    violations: list[Violation] = []
+    disabled = config.disabled_rules
+
+    if lang == "python":
+        if "obvious-comment" not in disabled:
+            violations.extend(
+                check_obvious_comments(
+                    rel_path,
+                    source_bytes,
+                    changed_lines,
+                    threshold=config.obvious_comment_threshold,
+                )
+            )
+        if "swallowed-exception" not in disabled:
+            violations.extend(
+                check_swallowed_exceptions(rel_path, source_bytes, changed_lines)
+            )
+        if "micro-wrapper" not in disabled:
+            violations.extend(
+                check_micro_wrappers(
+                    rel_path,
+                    source_bytes,
+                    py_call_counts,
+                    changed_lines,
+                    max_statements=config.micro_wrapper_max_statements,
+                )
+            )
+        if "filler-docstring" not in disabled:
+            violations.extend(
+                check_filler_docstrings(rel_path, source_bytes, changed_lines)
+            )
+    elif lang in ("javascript", "typescript", "tsx"):
+        if "obvious-comment" not in disabled:
+            violations.extend(
+                check_js_obvious_comments(
+                    rel_path,
+                    source_bytes,
+                    lang,
+                    changed_lines,
+                    threshold=config.obvious_comment_threshold,
+                )
+            )
+        if "swallowed-exception" not in disabled:
+            violations.extend(
+                check_js_swallowed_exceptions(rel_path, source_bytes, lang, changed_lines)
+            )
+        if "micro-wrapper" not in disabled:
+            violations.extend(
+                check_js_micro_wrappers(
+                    rel_path,
+                    source_bytes,
+                    lang,
+                    js_call_counts,
+                    changed_lines,
+                    max_statements=config.micro_wrapper_max_statements,
+                )
+            )
+        if "filler-docstring" not in disabled:
+            violations.extend(
+                check_js_filler_docstrings(rel_path, source_bytes, lang, changed_lines)
+            )
+
+    return violations
+
+
 def scan_staged(repo_root: str | Path | None = None) -> tuple[list[Violation], int]:
     root, config, staged_map = _load_filtered_staged(repo_root)
 
@@ -100,9 +183,20 @@ def scan_staged(repo_root: str | Path | None = None) -> tuple[list[Violation], i
     if VALID_RULE_IDS.issubset(config.disabled_rules):
         return [], len(staged_map)
 
-    call_counts = (
+    has_py = any(detect_language(p) == "python" for p in staged_map)
+    has_js = any(
+        detect_language(p) in ("javascript", "typescript", "tsx")
+        for p in staged_map
+    )
+
+    py_call_counts = (
         count_repo_calls(root)
-        if "micro-wrapper" not in config.disabled_rules
+        if "micro-wrapper" not in config.disabled_rules and has_py
+        else {}
+    )
+    js_call_counts = (
+        count_js_repo_calls(root)
+        if "micro-wrapper" not in config.disabled_rules and has_js
         else {}
     )
     violations: list[Violation] = []
@@ -111,34 +205,16 @@ def scan_staged(repo_root: str | Path | None = None) -> tuple[list[Violation], i
         source_bytes = read_staged_file_bytes(root, rel_path)
         if source_bytes is None:
             continue
-
-        if "obvious-comment" not in config.disabled_rules:
-            violations.extend(
-                check_obvious_comments(
-                    rel_path,
-                    source_bytes,
-                    changed_lines,
-                    threshold=config.obvious_comment_threshold,
-                )
+        violations.extend(
+            _scan_file_violations(
+                rel_path,
+                source_bytes,
+                changed_lines,
+                config,
+                py_call_counts,
+                js_call_counts,
             )
-        if "swallowed-exception" not in config.disabled_rules:
-            violations.extend(
-                check_swallowed_exceptions(rel_path, source_bytes, changed_lines)
-            )
-        if "micro-wrapper" not in config.disabled_rules:
-            violations.extend(
-                check_micro_wrappers(
-                    rel_path,
-                    source_bytes,
-                    call_counts,
-                    changed_lines,
-                    max_statements=config.micro_wrapper_max_statements,
-                )
-            )
-        if "filler-docstring" not in config.disabled_rules:
-            violations.extend(
-                check_filler_docstrings(rel_path, source_bytes, changed_lines)
-            )
+        )
 
     violations.sort(key=lambda v: (v.file_path, v.line, v.rule_id))
     return violations, len(staged_map)
@@ -193,7 +269,7 @@ def fix_staged(repo_root: str | Path | None = None) -> FixSummary:
             skipped_unstaged.append(rel_path)
             continue
 
-        result = fix_python_source(
+        result = fix_source(
             rel_path,
             disk_bytes,
             changed_lines=changed_lines,

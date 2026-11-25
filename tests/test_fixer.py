@@ -2,13 +2,13 @@
 
 import pytest
 
-from slopcheck.fixer import FixResult, fix_python_source
+from slopcheck.fixer import FixResult, fix_js_source, fix_python_source, fix_source
 from slopcheck.parser import parse_source, run_query
 
 
-def _has_syntax_errors(source: bytes) -> bool:
-    tree, _ = parse_source(source)
-    caps = run_query(tree, "(ERROR) @err")
+def _has_syntax_errors(source: bytes, language: str = "python") -> bool:
+    tree, _ = parse_source(source, language=language)
+    caps = run_query(tree, "(ERROR) @err", language=language)
     return bool(caps.get("err")) or tree.root_node.has_error
 
 
@@ -269,3 +269,169 @@ class TestFixResultFrozen:
         res = FixResult(fixed_source=b"", fixes_applied=0, applied_rule_ids=())
         with pytest.raises(AttributeError):
             res.fixes_applied = 1
+
+
+# ---------------------------------------------------------------------------
+# JS/TS fixer tests
+# ---------------------------------------------------------------------------
+
+
+class TestFixJsSource:
+    def test_removes_obvious_comment_line(self):
+        source = (
+            "// Calculate total\n"
+            "function calculateTotal(a, b) {\n"
+            "    return a + b;\n"
+            "}\n"
+        )
+        result = fix_js_source("app.js", source, language="javascript")
+
+        assert result.fixes_applied == 1
+        assert result.applied_rule_ids == ("obvious-comment",)
+        assert not _has_syntax_errors(result.fixed_source, language="javascript")
+        fixed = result.fixed_source.decode("utf-8")
+        assert "// Calculate total" not in fixed
+        assert "function calculateTotal" in fixed
+
+    def test_removes_single_and_multiline_jsdoc_filler(self):
+        source = (
+            "/** Helper method to add two numbers. */\n"
+            "function add(a, b) {\n"
+            "    return a + b;\n"
+            "}\n\n"
+            "/**\n"
+            " * This function is responsible for subtracting numbers.\n"
+            " */\n"
+            "function sub(a, b) {\n"
+            "    return a - b;\n"
+            "}\n"
+        )
+        result = fix_js_source("utils.js", source, language="javascript")
+
+        assert result.fixes_applied == 2
+        assert result.applied_rule_ids == ("filler-docstring",)
+        assert not _has_syntax_errors(result.fixed_source, language="javascript")
+        fixed = result.fixed_source.decode("utf-8")
+        assert "Helper method to add" not in fixed
+        assert "This function is responsible for" not in fixed
+        assert "function add" in fixed
+        assert "function sub" in fixed
+
+    def test_inline_jsdoc_before_declaration_preserves_declaration(self):
+        source = "/** Helper method to add two numbers. */ function add(a, b) { return a + b; }\n"
+        result = fix_js_source("inline.js", source, language="javascript")
+
+        assert result.fixes_applied == 1
+        assert not _has_syntax_errors(result.fixed_source, language="javascript")
+        assert result.fixed_source == b"function add(a, b) { return a + b; }\n"
+
+    def test_does_not_remove_swallowed_exception(self):
+        source = (
+            "function run() {\n"
+            "    try {\n"
+            "        return 1;\n"
+            "    } catch (e) {}\n"
+            "}\n"
+        )
+        result = fix_js_source("app.js", source, language="javascript")
+
+        assert result.fixes_applied == 0
+        assert result.fixed_source == source.encode("utf-8")
+
+    def test_respects_disabled_rules(self):
+        source = (
+            "/** Helper method to do work. */\n"
+            "// Do work\n"
+            "function doWork() { return 1; }\n"
+        )
+        both = fix_js_source("app.js", source, language="javascript")
+        assert both.fixes_applied == 2
+
+        result = fix_js_source(
+            "app.js",
+            source,
+            language="javascript",
+            disabled_rules=frozenset({"obvious-comment"}),
+        )
+        assert result.fixes_applied == 1
+        assert result.applied_rule_ids == ("filler-docstring",)
+        fixed = result.fixed_source.decode("utf-8")
+        assert "// Do work" in fixed
+        assert "Helper method to do work" not in fixed
+
+    def test_preserves_bom(self):
+        source = (
+            b"\xef\xbb\xbf"
+            b"// Calculate total\n"
+            b"function calculateTotal() { return 1; }\n"
+        )
+        result = fix_js_source("app.js", source, language="javascript")
+
+        assert result.fixes_applied == 1
+        assert result.fixed_source.startswith(b"\xef\xbb\xbf")
+        assert not _has_syntax_errors(result.fixed_source, language="javascript")
+
+    def test_preserves_crlf(self):
+        source = (
+            b"/**\r\n"
+            b" * Helper method to calculate total.\r\n"
+            b" */\r\n"
+            b"// Calculate total\r\n"
+            b"function calculateTotal() {\r\n"
+            b"    return 1;\r\n"
+            b"}\r\n"
+        )
+        result = fix_js_source("app.js", source, language="javascript")
+
+        assert result.fixes_applied == 2
+        assert b"\r\n" in result.fixed_source
+        assert b"\n" not in result.fixed_source.replace(b"\r\n", b"")
+        assert b"// Calculate total" not in result.fixed_source
+        assert b"Helper method to calculate total." not in result.fixed_source
+        assert not _has_syntax_errors(result.fixed_source, language="javascript")
+
+
+class TestFixSourceDispatcher:
+    def test_routes_py_to_fix_python_source(self):
+        source = (
+            "# Calculate total\n"
+            "def calculate_total():\n"
+            "    return 1\n"
+        )
+        result = fix_source("app.py", source)
+
+        assert result.fixes_applied == 1
+        assert "obvious-comment" in result.applied_rule_ids
+
+    def test_routes_ts_to_fix_js_source(self):
+        source = (
+            "// Calculate total\n"
+            "function calculateTotal(): number {\n"
+            "    return 1;\n"
+            "}\n"
+        )
+        result = fix_source("service.ts", source)
+
+        assert result.fixes_applied == 1
+        assert "obvious-comment" in result.applied_rule_ids
+        assert not _has_syntax_errors(result.fixed_source, language="typescript")
+
+    def test_routes_tsx_to_fix_js_source(self):
+        source = (
+            "/** Helper method to render my component. */\n"
+            "export function MyComponent() {\n"
+            "    return <div />;\n"
+            "}\n"
+        )
+        result = fix_source("MyComponent.tsx", source)
+
+        assert result.fixes_applied == 1
+        assert result.applied_rule_ids == ("filler-docstring",)
+        assert not _has_syntax_errors(result.fixed_source, language="tsx")
+
+    def test_unknown_extension_returns_zero_fixes(self):
+        source = b"# some content\n"
+        result = fix_source("README.md", source)
+
+        assert result.fixes_applied == 0
+        assert result.fixed_source == source
