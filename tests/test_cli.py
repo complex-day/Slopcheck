@@ -319,3 +319,159 @@ def test_cli_malformed_config_exits_2(tmp_path: Path, capsys):
     assert exit_code == 2
     assert "slopcheck config error:" in captured.err
     assert captured.out == ""
+
+
+def test_cli_config_exclude_trailing_slash_folder(tmp_path: Path, capsys):
+    init_repo(tmp_path)
+    (tmp_path / ".slopcheck.toml").write_text(
+        '[slopcheck]\nexclude = ["migrations/"]\n',
+        encoding="utf-8",
+    )
+
+    (tmp_path / "migrations").mkdir()
+    (tmp_path / "migrations" / "0001_init.py").write_text(
+        "# Calculate total\ndef calculate_total():\n    return 1\n",
+        encoding="utf-8",
+    )
+    (tmp_path / "app.py").write_text(
+        "def clean(a: int, b: int) -> int:\n    return a + b\n",
+        encoding="utf-8",
+    )
+    subprocess.run(
+        ["git", "add", "migrations/0001_init.py", "app.py"],
+        cwd=tmp_path,
+        check=True,
+    )
+
+    exit_code = main(["--repo", str(tmp_path)])
+    captured = capsys.readouterr()
+
+    assert exit_code == 0
+    assert "slopcheck: Clean! Scanned 1 staged file(s) with 0 violations." in captured.out
+
+
+def test_cli_all_rules_disabled_skips_file_reads(tmp_path: Path, capsys, monkeypatch):
+    import slopcheck.runner as runner
+
+    init_repo(tmp_path)
+    (tmp_path / ".slopcheck.toml").write_text(
+        '[slopcheck]\ndisabled_rules = ["obvious-comment", "swallowed-exception", "micro-wrapper", "filler-docstring"]\n',
+        encoding="utf-8",
+    )
+    (tmp_path / "app.py").write_text(DIRTY_CODE, encoding="utf-8")
+    subprocess.run(["git", "add", "app.py"], cwd=tmp_path, check=True)
+
+    called = False
+
+    def fail_if_called(_root, _rel_path):
+        nonlocal called
+        called = True
+        return b""
+
+    monkeypatch.setattr(runner, "read_staged_file_bytes", fail_if_called)
+
+    exit_code = main(["--repo", str(tmp_path)])
+    captured = capsys.readouterr()
+
+    assert not called
+    assert exit_code == 0
+    assert "slopcheck: Clean! Scanned 1 staged file(s) with 0 violations." in captured.out
+
+
+def test_cli_fix_auto_removes_safe_slop_and_restages(tmp_path: Path, capsys):
+    init_repo(tmp_path)
+    app_file = tmp_path / "app.py"
+    app_file.write_text(
+        '"""This module is responsible for math."""\n\n'
+        "# Calculate total\n"
+        "def calculate_total(a: int, b: int) -> int:\n"
+        '    """Helper function to add two numbers."""\n'
+        "    return a + b\n",
+        encoding="utf-8",
+    )
+    subprocess.run(["git", "add", "app.py"], cwd=tmp_path, check=True)
+
+    exit_code = main(["--repo", str(tmp_path), "--fix"])
+    captured = capsys.readouterr()
+
+    assert exit_code == 0
+    assert "slopcheck: Auto-fixed 3 issue(s) across 1 file(s) and re-staged." in captured.out
+    assert "slopcheck: Clean! 0 violations remaining." in captured.out
+
+    # Subsequent normal scan should also be clean
+    follow_up_code = main(["--repo", str(tmp_path)])
+    follow_up_out = capsys.readouterr().out
+    assert follow_up_code == 0
+    assert "slopcheck: Clean! Scanned 1 staged file(s) with 0 violations." in follow_up_out
+
+    # Verify working tree and staged index are in sync and fixed
+    staged_blob = subprocess.run(
+        ["git", "show", ":app.py"],
+        cwd=tmp_path,
+        check=True,
+        capture_output=True,
+    ).stdout
+    assert staged_blob.decode("utf-8") == app_file.read_text(encoding="utf-8")
+    assert subprocess.run(["git", "diff", "--quiet", "--", "app.py"], cwd=tmp_path).returncode == 0
+    assert "This module is responsible for" not in app_file.read_text(encoding="utf-8")
+    assert "# Calculate total" not in app_file.read_text(encoding="utf-8")
+    assert "Helper function to" not in app_file.read_text(encoding="utf-8")
+
+
+def test_cli_fix_leaves_swallowed_exception_and_exits_1(tmp_path: Path, capsys):
+    init_repo(tmp_path)
+    app_file = tmp_path / "app.py"
+    app_file.write_text(
+        "# Calculate total\n"
+        "def calculate_total():\n"
+        '    """Helper function to return 1."""\n'
+        "    try:\n"
+        "        return 1\n"
+        "    except:\n"
+        "        pass\n",
+        encoding="utf-8",
+    )
+    subprocess.run(["git", "add", "app.py"], cwd=tmp_path, check=True)
+
+    exit_code = main(["--repo", str(tmp_path), "--fix"])
+    captured = capsys.readouterr()
+
+    assert exit_code == 1
+    assert "slopcheck: Auto-fixed 2 issue(s) across 1 file(s) and re-staged." in captured.out
+    assert "swallowed-exception" in captured.out
+    assert "1 violation(s) remaining that require manual review." in captured.out
+
+    fixed_text = app_file.read_text(encoding="utf-8")
+    assert "# Calculate total" not in fixed_text
+    assert "Helper function to" not in fixed_text
+    assert "except:\n        pass" in fixed_text
+
+
+def test_cli_fix_skips_file_with_unstaged_edits(tmp_path: Path, capsys):
+    init_repo(tmp_path)
+    app_file = tmp_path / "app.py"
+    app_file.write_text(
+        "# Calculate total\n"
+        "def calculate_total():\n"
+        "    return 1\n",
+        encoding="utf-8",
+    )
+    subprocess.run(["git", "add", "app.py"], cwd=tmp_path, check=True)
+
+    unstaged_content = (
+        "# Calculate total\n"
+        "def calculate_total():\n"
+        "    # Unstaged local WIP edit\n"
+        "    return 2\n"
+    )
+    app_file.write_text(unstaged_content, encoding="utf-8")
+
+    exit_code = main(["--repo", str(tmp_path), "--fix"])
+    captured = capsys.readouterr()
+
+    assert exit_code == 1
+    assert "slopcheck warning: Skipped 'app.py'" in captured.err
+    assert "unstaged edits" in captured.err
+    assert "obvious-comment" in captured.out
+    assert "1 violation(s) remaining that require manual review." in captured.out
+    assert app_file.read_text(encoding="utf-8") == unstaged_content
