@@ -11,7 +11,7 @@
 - Python 3.10+ using modern `src/` layout (`src/slopcheck/`) and `pyproject.toml` with `setuptools`.
 - CLI parsing: Use Python's built-in `argparse` only (no Click/Typer unless explicitly asked).
 - Static Analysis Parser: Use ONLY `tree-sitter` (v0.27.0+) with `tree-sitter-python`, `tree-sitter-javascript`, and `tree-sitter-typescript` (v0.2.0+). Do NOT mix with Python's built-in `ast` or `tokenize` modules.
-- Zero external API calls or cloud services. Must run 100% offline.
+- Offline Core & Licensing: Core `slopcheck` scanning remains 100% offline with zero external API calls. Pro license activation and periodic re-validation use Python's built-in `urllib.request` to communicate with Polar.sh's license API (`https://api.polar.sh/v1/customer-portal/license-keys`) backed by a 14-day local offline grace cache.
 
 ## 3. Tree-sitter v0.27.0+ API Rules (CRITICAL)
 - NEVER use deprecated APIs:
