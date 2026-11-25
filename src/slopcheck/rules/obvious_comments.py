@@ -53,6 +53,7 @@ def check_obvious_comments(
     file_path: str,
     source: str | bytes,
     changed_lines: set[int] | None = None,
+    threshold: float = 0.70,
 ) -> list[Violation]:
     tree, source_bytes = parse_source(source)
     captures = run_query(tree, QUERY_STATEMENTS)
@@ -118,7 +119,7 @@ def check_obvious_comments(
                 continue
 
             overlap = len(comment_words & identifier_words) / len(comment_words)
-            if overlap > 0.70:
+            if overlap > threshold:
                 violations.append(
                     Violation(
                         file_path=file_path,

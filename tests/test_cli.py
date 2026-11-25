@@ -162,3 +162,160 @@ def test_cli_reads_staged_index_not_unstaged_edits(tmp_path: Path, capsys):
     assert "swallowed-exception" in captured.out
     assert "filler-docstring" in captured.out
     assert "slopcheck: Found 3 violation(s) across 1 staged file(s)." in captured.out
+
+
+def test_cli_config_disabled_rules(tmp_path: Path, capsys, monkeypatch):
+    import slopcheck.runner as runner
+
+    init_repo(tmp_path)
+    (tmp_path / ".slopcheck.toml").write_text(
+        '[slopcheck]\ndisabled_rules = ["micro-wrapper", "filler-docstring"]\n',
+        encoding="utf-8",
+    )
+    app_file = tmp_path / "app.py"
+    app_file.write_text(DIRTY_CODE, encoding="utf-8")
+    subprocess.run(["git", "add", "app.py"], cwd=tmp_path, check=True)
+
+    called = False
+
+    def fail_if_called(_root):
+        nonlocal called
+        called = True
+        return {}
+
+    monkeypatch.setattr(runner, "count_repo_calls", fail_if_called)
+
+    exit_code = main(["--repo", str(tmp_path)])
+    captured = capsys.readouterr()
+
+    assert not called
+    assert exit_code == 1
+    assert "obvious-comment" in captured.out
+    assert "swallowed-exception" in captured.out
+    assert "micro-wrapper" not in captured.out
+    assert "filler-docstring" not in captured.out
+    assert "slopcheck: Found 2 violation(s) across 1 staged file(s)." in captured.out
+
+
+def test_cli_config_exclude_skips_matching_files(tmp_path: Path, capsys):
+    init_repo(tmp_path)
+    (tmp_path / ".slopcheck.toml").write_text(
+        '[slopcheck]\nexclude = ["vendor/*", "legacy\\\\*"]\n',
+        encoding="utf-8",
+    )
+
+    excluded_code = (
+        "# Calculate total\n"
+        "def calculate_total():\n"
+        "    return 1\n"
+    )
+
+    (tmp_path / "vendor").mkdir()
+    (tmp_path / "vendor" / "gen.py").write_text(excluded_code, encoding="utf-8")
+    (tmp_path / "legacy").mkdir()
+    (tmp_path / "legacy" / "old.py").write_text(excluded_code, encoding="utf-8")
+    (tmp_path / "app.py").write_text(DIRTY_CODE, encoding="utf-8")
+
+    subprocess.run(
+        ["git", "add", "vendor/gen.py", "legacy/old.py", "app.py"],
+        cwd=tmp_path,
+        check=True,
+    )
+
+    exit_code = main(["--repo", str(tmp_path)])
+    captured = capsys.readouterr()
+
+    assert exit_code == 1
+    assert "vendor/gen.py" not in captured.out
+    assert "legacy/old.py" not in captured.out
+    assert "app.py:" in captured.out
+    assert "slopcheck: Found 4 violation(s) across 1 staged file(s)." in captured.out
+
+
+def test_cli_config_exclude_all_staged_skips_repo_walk(
+    tmp_path: Path, capsys, monkeypatch
+):
+    import slopcheck.runner as runner
+
+    init_repo(tmp_path)
+    (tmp_path / ".slopcheck.toml").write_text(
+        '[slopcheck]\nexclude = ["vendor/*"]\n',
+        encoding="utf-8",
+    )
+
+    (tmp_path / "vendor").mkdir()
+    (tmp_path / "vendor" / "gen.py").write_text(DIRTY_CODE, encoding="utf-8")
+    subprocess.run(["git", "add", "vendor/gen.py"], cwd=tmp_path, check=True)
+
+    called = False
+
+    def fail_if_called(_root):
+        nonlocal called
+        called = True
+        return {}
+
+    monkeypatch.setattr(runner, "count_repo_calls", fail_if_called)
+
+    exit_code = main(["--repo", str(tmp_path)])
+    captured = capsys.readouterr()
+
+    assert not called
+    assert exit_code == 0
+    assert "slopcheck: No staged Python files to check." in captured.out
+
+
+def test_cli_config_custom_threshold_and_max_statements(tmp_path: Path, capsys):
+    init_repo(tmp_path)
+    sample_code = (
+        "# calculate total amount\n"
+        "def calculate_total():\n"
+        "    return 1\n\n"
+        "def _three_step_helper(x: int) -> int:\n"
+        "    a = x + 1\n"
+        "    b = a * 2\n"
+        "    return b\n\n"
+        "def run() -> int:\n"
+        "    return _three_step_helper(3)\n"
+    )
+    app_file = tmp_path / "app.py"
+    app_file.write_text(sample_code, encoding="utf-8")
+    subprocess.run(["git", "add", "app.py"], cwd=tmp_path, check=True)
+
+    # Without config: 2/3 overlap <= 0.70 and 3 statements > 2 -> clean
+    assert main(["--repo", str(tmp_path)]) == 0
+    capsys.readouterr()
+
+    # With looser threshold and higher max_statements -> both flagged
+    (tmp_path / ".slopcheck.toml").write_text(
+        "[rules.obvious_comment]\n"
+        "threshold = 0.5\n"
+        "[rules.micro_wrapper]\n"
+        "max_statements = 3\n",
+        encoding="utf-8",
+    )
+
+    exit_code = main(["--repo", str(tmp_path)])
+    captured = capsys.readouterr()
+
+    assert exit_code == 1
+    assert "obvious-comment" in captured.out
+    assert "micro-wrapper" in captured.out
+    assert "slopcheck: Found 2 violation(s) across 1 staged file(s)." in captured.out
+
+
+def test_cli_malformed_config_exits_2(tmp_path: Path, capsys):
+    init_repo(tmp_path)
+    (tmp_path / ".slopcheck.toml").write_text(
+        "[slopcheck\nbroken",
+        encoding="utf-8",
+    )
+    app_file = tmp_path / "app.py"
+    app_file.write_text("x = 1\n", encoding="utf-8")
+    subprocess.run(["git", "add", "app.py"], cwd=tmp_path, check=True)
+
+    exit_code = main(["--repo", str(tmp_path)])
+    captured = capsys.readouterr()
+
+    assert exit_code == 2
+    assert "slopcheck config error:" in captured.err
+    assert captured.out == ""

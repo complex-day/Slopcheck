@@ -96,3 +96,16 @@ def test_obvious_comment_with_utf8_bom():
     assert len(violations_str) == 1
     assert violations_str[0].line == 1
 
+
+def test_custom_threshold():
+    source = (
+        "# calculate total amount\n"
+        "def calculate_total():\n"
+        "    return 1\n"
+    )
+    # 2/3 ~= 0.667: passes at default 0.70, fails at 0.50
+    assert check_obvious_comments("sample.py", source) == []
+    violations = check_obvious_comments("sample.py", source, threshold=0.50)
+    assert len(violations) == 1
+    assert violations[0].rule_id == "obvious-comment"
+

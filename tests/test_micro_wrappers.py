@@ -140,3 +140,23 @@ def test_changed_lines_filtering():
         str(fixture_path), source, call_counts, changed_lines=set()
     )
     assert len(v_empty) == 0
+
+
+def test_custom_max_statements():
+    source = (
+        "def _three_steps(x):\n"
+        "    a = x + 1\n"
+        "    b = a * 2\n"
+        "    return b\n"
+    )
+    call_counts = {"_three_steps": 1}
+
+    # Default max_statements=2 ignores 3-statement functions
+    assert check_micro_wrappers("sample.py", source, call_counts) == []
+
+    # Raising max_statements=3 flags it
+    violations = check_micro_wrappers(
+        "sample.py", source, call_counts, max_statements=3
+    )
+    assert len(violations) == 1
+    assert violations[0].rule_id == "micro-wrapper"

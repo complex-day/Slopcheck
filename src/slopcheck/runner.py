@@ -1,5 +1,7 @@
+import fnmatch
 from pathlib import Path
 import subprocess
+from slopcheck.config import load_config
 from slopcheck.diff_parser import GitDiffError, parse_staged_diff
 from slopcheck.rules import (
     Violation,
@@ -49,15 +51,35 @@ def read_staged_file_bytes(repo_root: Path, rel_path: str) -> bytes | None:
             return None
 
 
+def _is_excluded(rel_path: str, exclude_patterns: tuple[str, ...]) -> bool:
+    normalized_path = rel_path.replace("\\", "/")
+    return any(
+        fnmatch.fnmatch(normalized_path, pattern.replace("\\", "/"))
+        for pattern in exclude_patterns
+    )
+
+
 def scan_staged(repo_root: str | Path | None = None) -> tuple[list[Violation], int]:
     start_dir = Path(repo_root).resolve() if repo_root else Path.cwd().resolve()
     root = get_git_toplevel(start_dir)
+    config = load_config(root)
     staged_map = parse_staged_diff(cwd=root)
+
+    if config.exclude:
+        staged_map = {
+            rel_path: changed_lines
+            for rel_path, changed_lines in staged_map.items()
+            if not _is_excluded(rel_path, config.exclude)
+        }
 
     if not staged_map:
         return [], 0
 
-    call_counts = count_repo_calls(root)
+    call_counts = (
+        count_repo_calls(root)
+        if "micro-wrapper" not in config.disabled_rules
+        else {}
+    )
     violations: list[Violation] = []
 
     for rel_path, changed_lines in staged_map.items():
@@ -65,18 +87,33 @@ def scan_staged(repo_root: str | Path | None = None) -> tuple[list[Violation], i
         if source_bytes is None:
             continue
 
-        violations.extend(
-            check_obvious_comments(rel_path, source_bytes, changed_lines)
-        )
-        violations.extend(
-            check_swallowed_exceptions(rel_path, source_bytes, changed_lines)
-        )
-        violations.extend(
-            check_micro_wrappers(rel_path, source_bytes, call_counts, changed_lines)
-        )
-        violations.extend(
-            check_filler_docstrings(rel_path, source_bytes, changed_lines)
-        )
+        if "obvious-comment" not in config.disabled_rules:
+            violations.extend(
+                check_obvious_comments(
+                    rel_path,
+                    source_bytes,
+                    changed_lines,
+                    threshold=config.obvious_comment_threshold,
+                )
+            )
+        if "swallowed-exception" not in config.disabled_rules:
+            violations.extend(
+                check_swallowed_exceptions(rel_path, source_bytes, changed_lines)
+            )
+        if "micro-wrapper" not in config.disabled_rules:
+            violations.extend(
+                check_micro_wrappers(
+                    rel_path,
+                    source_bytes,
+                    call_counts,
+                    changed_lines,
+                    max_statements=config.micro_wrapper_max_statements,
+                )
+            )
+        if "filler-docstring" not in config.disabled_rules:
+            violations.extend(
+                check_filler_docstrings(rel_path, source_bytes, changed_lines)
+            )
 
     violations.sort(key=lambda v: (v.file_path, v.line, v.rule_id))
     return violations, len(staged_map)

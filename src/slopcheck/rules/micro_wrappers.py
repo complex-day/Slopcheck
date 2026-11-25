@@ -139,6 +139,7 @@ def check_micro_wrappers(
     source: str | bytes,
     call_counts: dict[str, int],
     changed_lines: set[int] | None = None,
+    max_statements: int = 2,
 ) -> list[Violation]:
     tree, source_bytes = parse_source(source)
     caps = run_query(tree, QUERY_FUNCTIONS)
@@ -163,7 +164,7 @@ def check_micro_wrappers(
             continue
 
         stmt_count = count_executable_statements(body_node)
-        if 1 <= stmt_count < 3 and call_counts.get(func_name, 0) == 1:
+        if 1 <= stmt_count <= max_statements and call_counts.get(func_name, 0) == 1:
             violations.append(
                 Violation(
                     file_path=file_path,

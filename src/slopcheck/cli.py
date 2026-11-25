@@ -1,6 +1,7 @@
 import argparse
 import sys
 from slopcheck import __version__
+from slopcheck.config import ConfigError
 from slopcheck.diff_parser import GitDiffError
 from slopcheck.runner import scan_staged
 
@@ -26,6 +27,9 @@ def main(argv: list[str] | None = None) -> int:
 
     try:
         violations, files_scanned = scan_staged(repo_root=args.repo)
+    except ConfigError as err:
+        print(f"slopcheck config error: {err}", file=sys.stderr)
+        return 2
     except GitDiffError as err:
         print(f"slopcheck error: {err}", file=sys.stderr)
         return 2
