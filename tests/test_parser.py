@@ -1,9 +1,12 @@
 from pathlib import Path
+import pytest
 from slopcheck.parser import (
+    detect_language,
     node_line,
     node_text,
     parse_file,
     parse_source,
+    run_matches,
     run_query,
 )
 
@@ -87,4 +90,95 @@ def test_parse_source_strips_utf8_bom():
     tree_bytes, bytes_bytes = parse_source(b"\xef\xbb\xbfx = 42\n")
     assert bytes_bytes == b"x = 42\n"
     assert tree_bytes.root_node.type == "module"
+
+
+def test_detect_language():
+    assert detect_language("app.py") == "python"
+    assert detect_language(Path("src/APP.PY")) == "python"
+    assert detect_language("index.js") == "javascript"
+    assert detect_language("Button.jsx") == "javascript"
+    assert detect_language("mod.mjs") == "javascript"
+    assert detect_language("legacy.cjs") == "javascript"
+    assert detect_language("service.ts") == "typescript"
+    assert detect_language("service.mts") == "typescript"
+    assert detect_language("service.cts") == "typescript"
+    assert detect_language("Widget.tsx") == "tsx"
+    assert detect_language("README.md") is None
+    assert detect_language("package.json") is None
+    assert detect_language("Makefile") is None
+
+
+def test_parse_js_ts_tsx_with_bom():
+    js_src = "\ufeff// Fetch user\nexport function fetchUser(id) { return id; }\n"
+    js_tree, js_bytes = parse_source(js_src, language="javascript")
+    assert js_tree.root_node.type == "program"
+    assert not js_tree.root_node.has_error
+    assert js_bytes.startswith(b"// Fetch user")
+
+    ts_src = b"\xef\xbb\xbfinterface User { id: number; }\nconst getUser = (u: User): number => u.id;\n"
+    ts_tree, ts_bytes = parse_source(ts_src, language="typescript")
+    assert ts_tree.root_node.type == "program"
+    assert not ts_tree.root_node.has_error
+    assert ts_bytes.startswith(b"interface User")
+
+    tsx_src = "\ufeffexport const Greeting = ({ name }: { name: string }) => <span>Hello {name}</span>;\n"
+    tsx_tree, tsx_bytes = parse_source(tsx_src, language="tsx")
+    assert tsx_tree.root_node.type == "program"
+    assert not tsx_tree.root_node.has_error
+    assert tsx_bytes.startswith(b"export const Greeting")
+
+
+def test_run_query_and_matches_on_js_and_ts():
+    js_code = """// Calculate total
+function calculateTotal() {
+  try {
+    return 1;
+  } catch (err) {
+    return 0;
+  }
+}
+"""
+    js_tree, js_bytes = parse_source(js_code, language="javascript")
+    js_caps = run_query(
+        js_tree,
+        "(comment) @comment (catch_clause) @catch",
+        language="javascript",
+    )
+    assert len(js_caps["comment"]) == 1
+    assert node_text(js_caps["comment"][0], js_bytes) == "// Calculate total"
+    assert node_line(js_caps["comment"][0]) == 1
+    assert len(js_caps["catch"]) == 1
+    assert node_line(js_caps["catch"][0]) == 5
+
+    ts_code = """// Handle request
+async function handleRequest(id: string): Promise<void> {
+  try {
+    console.log(id);
+  } catch (e) {
+  }
+}
+"""
+    ts_tree, ts_bytes = parse_source(ts_code, language="typescript")
+    ts_caps = run_query(
+        ts_tree,
+        "(comment) @comment (catch_clause) @catch",
+        language="typescript",
+    )
+    assert len(ts_caps["comment"]) == 1
+    assert node_text(ts_caps["comment"][0], ts_bytes) == "// Handle request"
+    assert len(ts_caps["catch"]) == 1
+
+    ts_matches = run_matches(ts_tree, "(catch_clause) @catch", language="typescript")
+    assert len(ts_matches) == 1
+
+
+def test_unsupported_language_raises_value_error():
+    with pytest.raises(ValueError, match="Unsupported language"):
+        parse_source("fn main() {}", language="rust")
+
+    tree, _ = parse_source("x = 1\n")
+    with pytest.raises(ValueError, match="Unsupported language"):
+        run_query(tree, "(comment) @c", language="rust")
+    with pytest.raises(ValueError, match="Unsupported language"):
+        run_matches(tree, "(comment) @c", language="rust")
 

@@ -7,6 +7,12 @@ class GitDiffError(Exception):
     """Raised when git diff execution fails."""
 
 
+PYTHON_EXTENSIONS = frozenset({".py"})
+SUPPORTED_EXTENSIONS = frozenset(
+    {".py", ".js", ".jsx", ".mjs", ".cjs", ".ts", ".mts", ".cts", ".tsx"}
+)
+
+
 HUNK_HEADER_RE = re.compile(
     r"^@@\s+-[0-9]+(?:,[0-9]+)?\s+\+([0-9]+)(?:,([0-9]+))?\s+@@"
 )
@@ -42,7 +48,10 @@ def get_staged_diff_text(cwd: str | Path | None = None) -> str:
         raise GitDiffError(f"Git diff failed: {err_msg}") from err
 
 
-def parse_diff_output(diff_text: str) -> dict[str, set[int]]:
+def parse_diff_output(
+    diff_text: str,
+    extensions: frozenset[str] = PYTHON_EXTENSIONS,
+) -> dict[str, set[int]]:
     diff_map: dict[str, set[int]] = {}
     current_file: str | None = None
 
@@ -68,7 +77,7 @@ def parse_diff_output(diff_text: str) -> dict[str, set[int]]:
                 raw_path = raw_path[2:]
 
             normalized_path = raw_path.replace("\\", "/")
-            if normalized_path.endswith(".py"):
+            if Path(normalized_path).suffix.lower() in extensions:
                 current_file = normalized_path
                 diff_map.setdefault(current_file, set())
             else:
@@ -88,9 +97,12 @@ def parse_diff_output(diff_text: str) -> dict[str, set[int]]:
     return {path: lines for path, lines in diff_map.items() if lines}
 
 
-def parse_staged_diff(cwd: str | Path | None = None) -> dict[str, set[int]]:
+def parse_staged_diff(
+    cwd: str | Path | None = None,
+    extensions: frozenset[str] = PYTHON_EXTENSIONS,
+) -> dict[str, set[int]]:
     diff_text = get_staged_diff_text(cwd=cwd)
-    return parse_diff_output(diff_text)
+    return parse_diff_output(diff_text, extensions=extensions)
 
 
 get_staged_diff = parse_staged_diff

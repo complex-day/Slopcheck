@@ -10,7 +10,7 @@
 ## 2. Tech Stack & Packaging (Strict)
 - Python 3.10+ using modern `src/` layout (`src/slopcheck/`) and `pyproject.toml` with `setuptools`.
 - CLI parsing: Use Python's built-in `argparse` only (no Click/Typer unless explicitly asked).
-- Static Analysis Parser: Use ONLY `tree-sitter` (v0.27.0+) and `tree-sitter-python`. Do NOT mix with Python's built-in `ast` or `tokenize` modules.
+- Static Analysis Parser: Use ONLY `tree-sitter` (v0.27.0+) with `tree-sitter-python`, `tree-sitter-javascript`, and `tree-sitter-typescript` (v0.2.0+). Do NOT mix with Python's built-in `ast` or `tokenize` modules.
 - Zero external API calls or cloud services. Must run 100% offline.
 
 ## 3. Tree-sitter v0.27.0+ API Rules (CRITICAL)
