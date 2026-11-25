@@ -53,7 +53,7 @@ def count_repo_calls(repo_root: str | Path) -> dict[str, int]:
                 except OSError:
                     continue
 
-                tree, _ = parse_source(source_bytes)
+                tree, source_bytes = parse_source(source_bytes)
                 caps = run_query(tree, QUERY_CALLS)
                 for call_node in caps.get("call", []):
                     fn_node = call_node.child_by_field_name("function")

@@ -169,6 +169,10 @@ def fix_staged(repo_root: str | Path | None = None) -> FixSummary:
     if not staged_map:
         return FixSummary(0, 0, 0, (), [])
 
+    if {"obvious-comment", "filler-docstring"}.issubset(config.disabled_rules):
+        remaining_violations, _ = scan_staged(repo_root=root)
+        return FixSummary(len(staged_map), 0, 0, (), remaining_violations)
+
     files_fixed = 0
     total_fixes = 0
     skipped_unstaged: list[str] = []

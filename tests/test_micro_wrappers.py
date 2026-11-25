@@ -160,3 +160,24 @@ def test_custom_max_statements():
     )
     assert len(violations) == 1
     assert violations[0].rule_id == "micro-wrapper"
+
+
+def test_count_repo_calls_and_check_with_utf8_bom(tmp_path: Path):
+    bom_source = (
+        b"\xef\xbb\xbf"
+        b"def _tiny_bom_helper(x: int) -> int:\n"
+        b"    return x + 1\n\n"
+        b"def caller() -> int:\n"
+        b"    return _tiny_bom_helper(41)\n"
+    )
+    file_path = tmp_path / "bom_module.py"
+    file_path.write_bytes(bom_source)
+
+    call_counts = count_repo_calls(tmp_path)
+    assert call_counts.get("_tiny_bom_helper") == 1
+
+    violations = check_micro_wrappers(str(file_path), bom_source, call_counts)
+    assert len(violations) == 1
+    assert violations[0].rule_id == "micro-wrapper"
+    assert violations[0].line == 1
+    assert "_tiny_bom_helper" in violations[0].message

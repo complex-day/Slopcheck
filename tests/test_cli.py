@@ -475,3 +475,43 @@ def test_cli_fix_skips_file_with_unstaged_edits(tmp_path: Path, capsys):
     assert "obvious-comment" in captured.out
     assert "1 violation(s) remaining that require manual review." in captured.out
     assert app_file.read_text(encoding="utf-8") == unstaged_content
+
+
+def test_cli_fix_skips_fix_loop_when_fixable_rules_disabled(
+    tmp_path: Path, capsys, monkeypatch
+):
+    import slopcheck.runner as runner
+
+    init_repo(tmp_path)
+    (tmp_path / ".slopcheck.toml").write_text(
+        '[slopcheck]\ndisabled_rules = ["obvious-comment", "filler-docstring"]\n',
+        encoding="utf-8",
+    )
+    app_file = tmp_path / "app.py"
+    app_file.write_text(
+        "# Calculate total\n"
+        "def calculate_total():\n"
+        "    try:\n"
+        "        return 1\n"
+        "    except:\n"
+        "        pass\n",
+        encoding="utf-8",
+    )
+    subprocess.run(["git", "add", "app.py"], cwd=tmp_path, check=True)
+
+    called = False
+
+    def fail_if_called(*_args, **_kwargs):
+        nonlocal called
+        called = True
+        raise AssertionError("fix_python_source should not be called")
+
+    monkeypatch.setattr(runner, "fix_python_source", fail_if_called)
+
+    exit_code = main(["--repo", str(tmp_path), "--fix"])
+    captured = capsys.readouterr()
+
+    assert not called
+    assert exit_code == 1
+    assert "swallowed-exception" in captured.out
+    assert "1 violation(s) remaining that require manual review." in captured.out
