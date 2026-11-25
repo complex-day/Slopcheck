@@ -5,6 +5,7 @@ import subprocess
 from slopcheck.config import SlopcheckConfig, VALID_RULE_IDS, load_config
 from slopcheck.diff_parser import GitDiffError, parse_staged_diff, SUPPORTED_EXTENSIONS
 from slopcheck.fixer import fix_source
+from slopcheck.license import check_pro_license
 from slopcheck.parser import detect_language
 from slopcheck.rules import (
     Violation,
@@ -19,6 +20,20 @@ from slopcheck.rules import (
     count_js_repo_calls,
     count_repo_calls,
 )
+
+
+_JS_TS_LANGUAGES = frozenset({"javascript", "typescript", "tsx"})
+
+
+class ProRequiredError(Exception):
+    """Raised when an operation requires an active slopcheck Pro license."""
+
+
+@dataclass(frozen=True)
+class ScanSummary:
+    violations: list[Violation]
+    files_scanned: int
+    skipped_pro_files: tuple[str, ...] = ()
 
 
 @dataclass(frozen=True)
@@ -81,9 +96,17 @@ def _is_excluded(rel_path: str, exclude_patterns: tuple[str, ...]) -> bool:
 
 def _load_filtered_staged(
     repo_root: str | Path | None = None,
-) -> tuple[Path, SlopcheckConfig, dict[str, set[int]]]:
+    *,
+    is_pro: bool | None = None,
+) -> tuple[Path, SlopcheckConfig, dict[str, set[int]], bool]:
     start_dir = Path(repo_root).resolve() if repo_root else Path.cwd().resolve()
     root = get_git_toplevel(start_dir)
+    pro_active = check_pro_license().is_pro if is_pro is None else is_pro
+    if (root / ".slopcheck.toml").exists() and not pro_active:
+        raise ProRequiredError(
+            "Custom '.slopcheck.toml' configuration requires slopcheck Pro. "
+            "Run 'slopcheck activate <LICENSE_KEY>' to unlock."
+        )
     config = load_config(root)
     staged_map = parse_staged_diff(cwd=root, extensions=SUPPORTED_EXTENSIONS)
 
@@ -94,7 +117,7 @@ def _load_filtered_staged(
             if not _is_excluded(rel_path, config.exclude)
         }
 
-    return root, config, staged_map
+    return root, config, staged_map, pro_active
 
 
 def _scan_file_violations(
@@ -140,7 +163,7 @@ def _scan_file_violations(
             violations.extend(
                 check_filler_docstrings(rel_path, source_bytes, changed_lines)
             )
-    elif lang in ("javascript", "typescript", "tsx"):
+    elif lang in _JS_TS_LANGUAGES:
         if "obvious-comment" not in disabled:
             violations.extend(
                 check_js_obvious_comments(
@@ -174,20 +197,42 @@ def _scan_file_violations(
     return violations
 
 
-def scan_staged(repo_root: str | Path | None = None) -> tuple[list[Violation], int]:
-    root, config, staged_map = _load_filtered_staged(repo_root)
+def scan_staged_with_summary(
+    repo_root: str | Path | None = None,
+    *,
+    is_pro: bool | None = None,
+) -> ScanSummary:
+    root, config, staged_map, pro_active = _load_filtered_staged(
+        repo_root, is_pro=is_pro
+    )
+
+    skipped_pro_files: tuple[str, ...] = ()
+    if not pro_active and staged_map:
+        skipped = [p for p in staged_map if detect_language(p) in _JS_TS_LANGUAGES]
+        if skipped:
+            skipped_pro_files = tuple(sorted(skipped))
+            staged_map = {
+                p: lines
+                for p, lines in staged_map.items()
+                if detect_language(p) not in _JS_TS_LANGUAGES
+            }
 
     if not staged_map:
-        return [], 0
+        return ScanSummary(
+            violations=[],
+            files_scanned=0,
+            skipped_pro_files=skipped_pro_files,
+        )
 
     if VALID_RULE_IDS.issubset(config.disabled_rules):
-        return [], len(staged_map)
+        return ScanSummary(
+            violations=[],
+            files_scanned=len(staged_map),
+            skipped_pro_files=skipped_pro_files,
+        )
 
     has_py = any(detect_language(p) == "python" for p in staged_map)
-    has_js = any(
-        detect_language(p) in ("javascript", "typescript", "tsx")
-        for p in staged_map
-    )
+    has_js = any(detect_language(p) in _JS_TS_LANGUAGES for p in staged_map)
 
     py_call_counts = (
         count_repo_calls(root)
@@ -217,7 +262,16 @@ def scan_staged(repo_root: str | Path | None = None) -> tuple[list[Violation], i
         )
 
     violations.sort(key=lambda v: (v.file_path, v.line, v.rule_id))
-    return violations, len(staged_map)
+    return ScanSummary(
+        violations=violations,
+        files_scanned=len(staged_map),
+        skipped_pro_files=skipped_pro_files,
+    )
+
+
+def scan_staged(repo_root: str | Path | None = None) -> tuple[list[Violation], int]:
+    summary = scan_staged_with_summary(repo_root=repo_root)
+    return summary.violations, summary.files_scanned
 
 
 def _has_unstaged_edits(
@@ -240,14 +294,20 @@ def _has_unstaged_edits(
 
 
 def fix_staged(repo_root: str | Path | None = None) -> FixSummary:
-    root, config, staged_map = _load_filtered_staged(repo_root)
+    is_pro = check_pro_license().is_pro
+    if not is_pro:
+        raise ProRequiredError(
+            "'--fix' auto-cleanup requires a Pro license. Run 'slopcheck activate <LICENSE_KEY>' to unlock."
+        )
+
+    root, config, staged_map, _ = _load_filtered_staged(repo_root, is_pro=True)
 
     if not staged_map:
         return FixSummary(0, 0, 0, (), [])
 
     if {"obvious-comment", "filler-docstring"}.issubset(config.disabled_rules):
-        remaining_violations, _ = scan_staged(repo_root=root)
-        return FixSummary(len(staged_map), 0, 0, (), remaining_violations)
+        remaining = scan_staged_with_summary(repo_root=root, is_pro=True)
+        return FixSummary(len(staged_map), 0, 0, (), remaining.violations)
 
     files_fixed = 0
     total_fixes = 0
@@ -304,12 +364,12 @@ def fix_staged(repo_root: str | Path | None = None) -> FixSummary:
             files_fixed += 1
             total_fixes += result.fixes_applied
 
-    remaining_violations, _ = scan_staged(repo_root=root)
+    remaining = scan_staged_with_summary(repo_root=root, is_pro=True)
 
     return FixSummary(
         files_scanned=len(staged_map),
         files_fixed=files_fixed,
         total_fixes=total_fixes,
         skipped_unstaged=tuple(skipped_unstaged),
-        remaining_violations=remaining_violations,
+        remaining_violations=remaining.violations,
     )
