@@ -666,3 +666,57 @@ def test_cli_scans_and_fixes_staged_tsx_file(tmp_path: Path, capsys):
     assert "slopcheck: Auto-fixed 2 issue(s) across 1 file(s) and re-staged." in fix_out
     assert "slopcheck: Clean! 0 violations remaining." in fix_out
     assert "<div>{title}</div>" in tsx_file.read_text(encoding="utf-8")
+
+
+def test_cli_invalid_config_values_exit_2_in_scan_and_fix(tmp_path: Path, capsys):
+    init_repo(tmp_path)
+    app_file = tmp_path / "app.py"
+    app_file.write_text("# Calculate total\ndef calculate_total():\n    return 1\n", encoding="utf-8")
+    subprocess.run(["git", "add", "app.py"], cwd=tmp_path, check=True)
+
+    (tmp_path / ".slopcheck.toml").write_text(
+        '[slopcheck]\ndisabled_rules = ["not-a-real-rule"]\n',
+        encoding="utf-8",
+    )
+    assert main(["--repo", str(tmp_path)]) == 2
+    assert "slopcheck config error:" in capsys.readouterr().err
+
+    (tmp_path / ".slopcheck.toml").write_text(
+        "[rules.obvious_comment]\nthreshold = 1.5\n",
+        encoding="utf-8",
+    )
+    assert main(["--repo", str(tmp_path), "--fix"]) == 2
+    assert "slopcheck config error:" in capsys.readouterr().err
+
+
+def test_cli_fix_respects_toml_exclude_and_custom_threshold(tmp_path: Path, capsys):
+    init_repo(tmp_path)
+    (tmp_path / ".slopcheck.toml").write_text(
+        '[slopcheck]\nexclude = ["vendor/*"]\n\n'
+        "[rules.obvious_comment]\nthreshold = 0.5\n",
+        encoding="utf-8",
+    )
+    (tmp_path / "vendor").mkdir()
+    vendor_file = tmp_path / "vendor" / "gen.py"
+    vendor_file.write_text(
+        "# Calculate total\ndef calculate_total():\n    return 1\n",
+        encoding="utf-8",
+    )
+    app_file = tmp_path / "app.py"
+    app_file.write_text(
+        "# calculate total amount\ndef calculate_total():\n    return 1\n",
+        encoding="utf-8",
+    )
+    subprocess.run(
+        ["git", "add", "vendor/gen.py", "app.py"],
+        cwd=tmp_path,
+        check=True,
+    )
+
+    exit_code = main(["--repo", str(tmp_path), "--fix"])
+    captured = capsys.readouterr()
+
+    assert exit_code == 0
+    assert "slopcheck: Auto-fixed 1 issue(s) across 1 file(s) and re-staged." in captured.out
+    assert "# calculate total amount" not in app_file.read_text(encoding="utf-8")
+    assert "# Calculate total" in vendor_file.read_text(encoding="utf-8")
