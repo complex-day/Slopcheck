@@ -1,14 +1,14 @@
 # slopcheck
 
-A 100% offline CLI tool that scans `git diff --cached` using Tree-sitter AST analysis to catch AI-generated code slop before you commit.
+A 100% offline, zero-cost CLI tool that scans `git diff --cached` using Tree-sitter AST analysis to catch AI-generated code slop across Python, JavaScript, TypeScript, and TSX before you commit.
 
-## Free vs. Pro
+## Supported Languages & Capabilities
 
-- **Free (100% Offline, Forever):** Python (`.py`) staged diff scanning across all 4 detection rules (`obvious-comment`, `swallowed-exception`, `micro-wrapper`, `filler-docstring`) + pre-commit hook support.
-- **Pro (`slopcheck activate <LICENSE_KEY>` — 14-day offline grace cache):**
-  - Multi-language support for JavaScript & TypeScript (`.js`, `.jsx`, `.mjs`, `.cjs`, `.ts`, `.mts`, `.cts`, `.tsx`)
-  - Safe auto-cleanup with `slopcheck --fix` (auto-removes `obvious-comment` and `filler-docstring` and re-stages modified files)
-  - Custom project rules via `.slopcheck.toml` (`disabled_rules`, `exclude`, `threshold`, `max_statements`)
+- **Python** (`.py`)
+- **JavaScript & TypeScript** (`.js`, `.jsx`, `.mjs`, `.cjs`, `.ts`, `.mts`, `.cts`, `.tsx`)
+- **Safe Auto-Fix (`slopcheck --fix`)**: Automatically removes obvious comments and filler docstrings/JSDoc comments and re-stages modified files (leaving behavioral code smells like `swallowed-exception` and `micro-wrapper` untouched for manual review).
+- **Custom Configuration (`.slopcheck.toml`)**: Disable rules, exclude paths/folders, and tune thresholds per repository.
+- **100% Offline & Open Source**: Zero external API calls, zero telemetry, zero accounts.
 
 ---
 
@@ -17,7 +17,7 @@ A 100% offline CLI tool that scans `git diff --cached` using Tree-sitter AST ana
 `slopcheck` analyzes only your staged changes across four distinct code smells:
 
 ### 1. `obvious-comment` (Captain Obvious Comments)
-Flags comments that repeat $>70\%$ of the words from the identifier defined on the immediately following line (skipping pragmas like `# type: ignore` and `# noqa`).
+Flags comments (`# ...` or `// ...`) that repeat $>70\%$ of the words from the identifier defined on the immediately following line (skipping pragmas and directives like `# type: ignore`, `# noqa`, `eslint-disable`, and `@ts-ignore`).
 
 ```python
 # Bad: repeats the next-line function name
@@ -32,7 +32,7 @@ def calculate_total():
 ```
 
 ### 2. `swallowed-exception` (Swallowed Exceptions)
-Flags broad catches (`except:`, `except Exception`, `except BaseException`, `except* Exception`) whose body only consists of `pass`, `...`, `print(...)`, or contextless `raise`.
+Flags broad catches (`except:`, `except Exception`, `except BaseException`, `except* Exception`, or JS/TS `catch`) whose body is empty or only consists of `pass`, `...`, `print(...)` / `console.log(...)`, or contextless re-raise/re-throw.
 
 ```python
 # Bad: silently swallows errors or only prints
@@ -52,7 +52,7 @@ except Exception as e:
 ```
 
 ### 3. `micro-wrapper` (Single-Use Micro-Wrappers)
-Flags newly added functions of 1–2 statements that are only invoked once across the entire repository (skipping `@property`, `@abstractmethod`, dunders like `__init__`, and `test_*` functions).
+Flags newly added functions of 1–2 statements that are only invoked once across the entire repository (skipping `@property`, `@abstractmethod`, exported JS/TS functions, dunders like `__init__`, and `test_*` functions).
 
 ```python
 # Bad: single-use helper that adds indirection without reuse
@@ -65,7 +65,7 @@ def get_user_profile(user_id: int):
 ```
 
 ### 4. `filler-docstring` (AI Filler Docstrings)
-Flags boilerplate docstrings filled with common LLM introductory phrases like *"This function is responsible for..."* or *"Helper method to..."*.
+Flags boilerplate docstrings and JSDoc comments filled with common LLM introductory phrases like *"This function is responsible for..."* or *"Helper method to..."*.
 
 ```python
 # Bad: LLM boilerplate filler
@@ -108,19 +108,14 @@ slopcheck
 # Scan staged changes in a specific repository root
 slopcheck --repo /path/to/repo
 
-# Pro: Auto-remove safe AI slop (obvious comments & filler docstrings) and re-stage
+# Auto-remove safe AI slop (obvious comments & filler docstrings) and re-stage
 slopcheck --fix
-
-# Pro: Manage your offline license (14-day grace cache)
-slopcheck activate <LICENSE_KEY>
-slopcheck status
-slopcheck deactivate
 
 # Check version
 slopcheck --version
 ```
 
-### Configuration (`.slopcheck.toml`, Pro)
+### Configuration (`.slopcheck.toml`)
 
 Create a `.slopcheck.toml` file in your repository root to customize rules and exclusions:
 
@@ -158,7 +153,7 @@ slopcheck: Clean! Scanned 2 staged file(s) with 0 violations.
 | :---: | :--- |
 | `0` | Clean: No violations detected, or no staged Python or JS/TS files to check. |
 | `1` | Violations: One or more code smell violations detected in staged diff. |
-| `2` | Error: Git execution failed, invalid `.slopcheck.toml`, license error, or Pro feature required. |
+| `2` | Error: Git execution failed, directory is not a Git repository, or invalid `.slopcheck.toml`. |
 
 ---
 
@@ -169,7 +164,7 @@ Add `slopcheck` as a pre-commit hook in your `.pre-commit-config.yaml`:
 ```yaml
 repos:
   - repo: https://github.com/complex-day/Slopcheck
-    rev: v0.2.0
+    rev: v0.2.1
     hooks:
       - id: slopcheck
 ```

@@ -4,8 +4,8 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "git-slopcheck"
-version = "0.2.0"
-description = "Offline CLI tool scanning staged git diffs for AI code smells across Python, JavaScript, TypeScript, and TSX using Tree-sitter, with optional safe auto-fix."
+version = "0.2.1"
+description = "100% offline CLI tool scanning staged git diffs for AI code smells across Python, JavaScript, TypeScript, and TSX using Tree-sitter, with optional safe auto-fix."
 readme = "README.md"
 requires-python = ">=3.11"
 license = {text = "MIT"}

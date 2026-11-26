@@ -1,56 +1,10 @@
-import io
-import json
 from pathlib import Path
 import subprocess
-import urllib.error
-from unittest.mock import patch
 
 import pytest
 
 from slopcheck import __version__
 from slopcheck.cli import main
-from slopcheck.license import activate_license
-
-
-class _FakeHTTPResponse:
-    def __init__(self, payload: dict):
-        self._raw = json.dumps(payload).encode("utf-8")
-
-    def read(self) -> bytes:
-        return self._raw
-
-    def __enter__(self):
-        return self
-
-    def __exit__(self, exc_type, exc, tb):
-        return False
-
-
-def _make_http_error(code: int, detail: str) -> urllib.error.HTTPError:
-    return urllib.error.HTTPError(
-        url="https://api.polar.sh/v1/customer-portal/license-keys/activate",
-        code=code,
-        msg="Error",
-        hdrs=None,
-        fp=io.BytesIO(json.dumps({"detail": detail}).encode("utf-8")),
-    )
-
-
-@pytest.fixture(autouse=True)
-def _isolated_slopcheck_home(tmp_path: Path, monkeypatch):
-    monkeypatch.setenv("SLOPCHECK_HOME", str(tmp_path / ".slopcheck_test_home"))
-
-
-def _activate_mock_pro(key: str = "SLOP-PRO-TEST", expires_at: str | None = None) -> None:
-    payload = {
-        "id": "act_cli_test",
-        "license_key": {
-            "status": "granted",
-            "expires_at": expires_at,
-        },
-    }
-    with patch("urllib.request.urlopen", return_value=_FakeHTTPResponse(payload)):
-        activate_license(key)
 
 DIRTY_CODE = '''"""This module is responsible for testing all rules."""
 
@@ -94,7 +48,7 @@ def test_cli_version(capsys):
     assert exc_info.value.code == 0
     captured = capsys.readouterr()
     assert f"slopcheck {__version__}" in captured.out
-    assert "slopcheck 0.2.0" in captured.out
+    assert "slopcheck 0.2.1" in captured.out
 
 
 def test_cli_non_git_repo(tmp_path: Path, capsys):
@@ -215,7 +169,6 @@ def test_cli_reads_staged_index_not_unstaged_edits(tmp_path: Path, capsys):
 def test_cli_config_disabled_rules(tmp_path: Path, capsys, monkeypatch):
     import slopcheck.runner as runner
 
-    _activate_mock_pro()
     init_repo(tmp_path)
     (tmp_path / ".slopcheck.toml").write_text(
         '[slopcheck]\ndisabled_rules = ["micro-wrapper", "filler-docstring"]\n',
@@ -247,7 +200,6 @@ def test_cli_config_disabled_rules(tmp_path: Path, capsys, monkeypatch):
 
 
 def test_cli_config_exclude_skips_matching_files(tmp_path: Path, capsys):
-    _activate_mock_pro()
     init_repo(tmp_path)
     (tmp_path / ".slopcheck.toml").write_text(
         '[slopcheck]\nexclude = ["vendor/*", "legacy\\\\*"]\n',
@@ -287,7 +239,6 @@ def test_cli_config_exclude_all_staged_skips_repo_walk(
 ):
     import slopcheck.runner as runner
 
-    _activate_mock_pro()
     init_repo(tmp_path)
     (tmp_path / ".slopcheck.toml").write_text(
         '[slopcheck]\nexclude = ["vendor/*"]\n',
@@ -336,8 +287,7 @@ def test_cli_config_custom_threshold_and_max_statements(tmp_path: Path, capsys):
     assert main(["--repo", str(tmp_path)]) == 0
     capsys.readouterr()
 
-    # With Pro + looser threshold and higher max_statements -> both flagged
-    _activate_mock_pro()
+    # With looser threshold and higher max_statements -> both flagged
     (tmp_path / ".slopcheck.toml").write_text(
         "[rules.obvious_comment]\n"
         "threshold = 0.5\n"
@@ -356,7 +306,6 @@ def test_cli_config_custom_threshold_and_max_statements(tmp_path: Path, capsys):
 
 
 def test_cli_malformed_config_exits_2(tmp_path: Path, capsys):
-    _activate_mock_pro()
     init_repo(tmp_path)
     (tmp_path / ".slopcheck.toml").write_text(
         "[slopcheck\nbroken",
@@ -375,7 +324,6 @@ def test_cli_malformed_config_exits_2(tmp_path: Path, capsys):
 
 
 def test_cli_config_exclude_trailing_slash_folder(tmp_path: Path, capsys):
-    _activate_mock_pro()
     init_repo(tmp_path)
     (tmp_path / ".slopcheck.toml").write_text(
         '[slopcheck]\nexclude = ["migrations/"]\n',
@@ -407,7 +355,6 @@ def test_cli_config_exclude_trailing_slash_folder(tmp_path: Path, capsys):
 def test_cli_all_rules_disabled_skips_file_reads(tmp_path: Path, capsys, monkeypatch):
     import slopcheck.runner as runner
 
-    _activate_mock_pro()
     init_repo(tmp_path)
     (tmp_path / ".slopcheck.toml").write_text(
         '[slopcheck]\ndisabled_rules = ["obvious-comment", "swallowed-exception", "micro-wrapper", "filler-docstring"]\n',
@@ -434,7 +381,6 @@ def test_cli_all_rules_disabled_skips_file_reads(tmp_path: Path, capsys, monkeyp
 
 
 def test_cli_fix_auto_removes_safe_slop_and_restages(tmp_path: Path, capsys):
-    _activate_mock_pro()
     init_repo(tmp_path)
     app_file = tmp_path / "app.py"
     app_file.write_text(
@@ -475,7 +421,6 @@ def test_cli_fix_auto_removes_safe_slop_and_restages(tmp_path: Path, capsys):
 
 
 def test_cli_fix_leaves_swallowed_exception_and_exits_1(tmp_path: Path, capsys):
-    _activate_mock_pro()
     init_repo(tmp_path)
     app_file = tmp_path / "app.py"
     app_file.write_text(
@@ -505,7 +450,6 @@ def test_cli_fix_leaves_swallowed_exception_and_exits_1(tmp_path: Path, capsys):
 
 
 def test_cli_fix_skips_file_with_unstaged_edits(tmp_path: Path, capsys):
-    _activate_mock_pro()
     init_repo(tmp_path)
     app_file = tmp_path / "app.py"
     app_file.write_text(
@@ -540,7 +484,6 @@ def test_cli_fix_skips_fix_loop_when_fixable_rules_disabled(
 ):
     import slopcheck.runner as runner
 
-    _activate_mock_pro()
     init_repo(tmp_path)
     (tmp_path / ".slopcheck.toml").write_text(
         '[slopcheck]\ndisabled_rules = ["obvious-comment", "filler-docstring"]\n',
@@ -603,7 +546,6 @@ function runAll(): number {
 
 
 def test_cli_scans_staged_ts_file_all_rules(tmp_path: Path, capsys):
-    _activate_mock_pro()
     init_repo(tmp_path)
     ts_file = tmp_path / "service.ts"
     ts_file.write_text(DIRTY_TS, encoding="utf-8")
@@ -621,7 +563,6 @@ def test_cli_scans_staged_ts_file_all_rules(tmp_path: Path, capsys):
 
 
 def test_cli_fix_ts_file_removes_safe_slop_leaves_exception(tmp_path: Path, capsys):
-    _activate_mock_pro()
     init_repo(tmp_path)
     ts_file = tmp_path / "service.ts"
     ts_file.write_text(
@@ -655,7 +596,6 @@ def test_cli_fix_ts_file_removes_safe_slop_leaves_exception(tmp_path: Path, caps
 
 
 def test_cli_mixed_py_and_ts_staged_files(tmp_path: Path, capsys):
-    _activate_mock_pro()
     init_repo(tmp_path)
     py_file = tmp_path / "app.py"
     py_file.write_text(
@@ -701,153 +641,28 @@ def test_cli_ignores_non_supported_staged_files(tmp_path: Path, capsys):
     assert "slopcheck: No staged Python or JS/TS files to check." in captured.out
 
 
-# ---------------------------------------------------------------------------
-# License CLI commands & Free vs. Pro gating tests
-# ---------------------------------------------------------------------------
-
-
-def test_cli_activate_status_deactivate_flow(capsys):
-    # Initial status: Free
-    assert main(["status"]) == 0
-    out = capsys.readouterr().out
-    assert "slopcheck Free: Not activated (not_activated)." in out
-
-    # Missing or blank license key on activate -> usage error exit 2
-    assert main(["activate"]) == 2
-    err = capsys.readouterr().err
-    assert "Usage: slopcheck activate <LICENSE_KEY>" in err
-
-    assert main(["activate", "   "]) == 2
-    err = capsys.readouterr().err
-    assert "Usage: slopcheck activate <LICENSE_KEY>" in err
-
-    # Invalid key from API -> license error exit 2
-    with patch(
-        "urllib.request.urlopen",
-        side_effect=_make_http_error(404, "License key not found"),
-    ):
-        assert main(["activate", "SLOP-INVALID"]) == 2
-    err = capsys.readouterr().err
-    assert "slopcheck license error:" in err
-    assert "License key not found" in err
-
-    # Valid activation -> exit 0
-    payload = {
-        "id": "act_cli_flow",
-        "license_key": {
-            "status": "granted",
-            "expires_at": "2099-01-01T00:00:00+00:00",
-        },
-    }
-    with patch("urllib.request.urlopen", return_value=_FakeHTTPResponse(payload)):
-        assert main(["activate", "SLOP-VALID-KEY"]) == 0
-    out = capsys.readouterr().out
-    assert "slopcheck Pro activated! Offline cache valid for 14 days." in out
-    assert "2099-01-01T00:00:00+00:00" in out
-
-    # Status now reports Active without making network calls
-    with patch("urllib.request.urlopen") as mock_urlopen:
-        assert main(["status"]) == 0
-    mock_urlopen.assert_not_called()
-    out = capsys.readouterr().out
-    assert "slopcheck Pro: Active (active_cached)" in out
-    assert "2099-01-01T00:00:00+00:00" in out
-
-    # Deactivate removes local license
-    assert main(["deactivate"]) == 0
-    out = capsys.readouterr().out
-    assert "slopcheck: Local Pro license removed." in out
-
-    # Second deactivate reports no local license
-    assert main(["deactivate"]) == 0
-    out = capsys.readouterr().out
-    assert "slopcheck: No local license found." in out
-
-
-def test_cli_free_scans_python_all_rules_successfully(tmp_path: Path, capsys):
+def test_cli_scans_and_fixes_staged_tsx_file(tmp_path: Path, capsys):
     init_repo(tmp_path)
-    py_file = tmp_path / "app.py"
-    py_file.write_text(DIRTY_CODE, encoding="utf-8")
-    subprocess.run(["git", "add", "app.py"], cwd=tmp_path, check=True)
-
-    exit_code = main(["--repo", str(tmp_path)])
-    captured = capsys.readouterr()
-
-    assert exit_code == 1
-    assert "obvious-comment" in captured.out
-    assert "swallowed-exception" in captured.out
-    assert "micro-wrapper" in captured.out
-    assert "filler-docstring" in captured.out
-    assert captured.err == ""
-
-
-def test_cli_free_fix_requires_pro_exits_2(tmp_path: Path, capsys):
-    init_repo(tmp_path)
-    py_file = tmp_path / "app.py"
-    py_file.write_text("# Calculate total\ndef calculate_total():\n    return 1\n", encoding="utf-8")
-    subprocess.run(["git", "add", "app.py"], cwd=tmp_path, check=True)
-
-    exit_code = main(["--repo", str(tmp_path), "--fix"])
-    captured = capsys.readouterr()
-
-    assert exit_code == 2
-    assert "slopcheck Pro required:" in captured.err
-    assert "'--fix' auto-cleanup requires a Pro license" in captured.err
-    assert captured.out == ""
-
-
-def test_cli_free_toml_config_requires_pro_exits_2(tmp_path: Path, capsys):
-    init_repo(tmp_path)
-    (tmp_path / ".slopcheck.toml").write_text(
-        '[slopcheck]\ndisabled_rules = ["obvious-comment"]\n',
+    tsx_file = tmp_path / "Card.tsx"
+    tsx_file.write_text(
+        "/** Helper method to render user card. */\n"
+        "// User card\n"
+        "export const UserCard = ({ title }: { title: string }) => (\n"
+        "    <div>{title}</div>\n"
+        ");\n",
         encoding="utf-8",
     )
-    py_file = tmp_path / "app.py"
-    py_file.write_text("x = 1\n", encoding="utf-8")
-    subprocess.run(["git", "add", "app.py"], cwd=tmp_path, check=True)
+    subprocess.run(["git", "add", "Card.tsx"], cwd=tmp_path, check=True)
 
-    exit_code = main(["--repo", str(tmp_path)])
-    captured = capsys.readouterr()
+    scan_code = main(["--repo", str(tmp_path)])
+    scan_out = capsys.readouterr().out
+    assert scan_code == 1
+    assert "filler-docstring" in scan_out
+    assert "obvious-comment" in scan_out
 
-    assert exit_code == 2
-    assert "slopcheck Pro required:" in captured.err
-    assert ".slopcheck.toml" in captured.err
-    assert captured.out == ""
-
-
-def test_cli_free_skips_ts_file_with_notice_and_exits_0(tmp_path: Path, capsys):
-    init_repo(tmp_path)
-    ts_file = tmp_path / "service.ts"
-    ts_file.write_text(DIRTY_TS, encoding="utf-8")
-    subprocess.run(["git", "add", "service.ts"], cwd=tmp_path, check=True)
-
-    exit_code = main(["--repo", str(tmp_path)])
-    captured = capsys.readouterr()
-
-    assert exit_code == 0
-    assert "slopcheck notice: Skipped 1 JS/TS file(s) (Pro feature" in captured.err
-    assert "slopcheck activate <LICENSE_KEY>" in captured.err
-    assert captured.out == ""
-
-
-def test_cli_free_mixed_py_and_ts_scans_py_and_skips_ts(tmp_path: Path, capsys):
-    init_repo(tmp_path)
-    py_file = tmp_path / "app.py"
-    py_file.write_text(
-        "# Calculate total\ndef calculate_total():\n    return 1\n",
-        encoding="utf-8",
-    )
-    ts_file = tmp_path / "service.ts"
-    ts_file.write_text(DIRTY_TS, encoding="utf-8")
-    subprocess.run(
-        ["git", "add", "app.py", "service.ts"], cwd=tmp_path, check=True
-    )
-
-    exit_code = main(["--repo", str(tmp_path)])
-    captured = capsys.readouterr()
-
-    assert exit_code == 1
-    assert "slopcheck notice: Skipped 1 JS/TS file(s)" in captured.err
-    assert "app.py:1: [obvious-comment]" in captured.out
-    assert "service.ts" not in captured.out
-    assert "slopcheck: Found 1 violation(s) across 1 staged file(s)." in captured.out
+    fix_code = main(["--repo", str(tmp_path), "--fix"])
+    fix_out = capsys.readouterr().out
+    assert fix_code == 0
+    assert "slopcheck: Auto-fixed 2 issue(s) across 1 file(s) and re-staged." in fix_out
+    assert "slopcheck: Clean! 0 violations remaining." in fix_out
+    assert "<div>{title}</div>" in tsx_file.read_text(encoding="utf-8")

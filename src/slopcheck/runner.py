@@ -5,7 +5,6 @@ import subprocess
 from slopcheck.config import SlopcheckConfig, VALID_RULE_IDS, load_config
 from slopcheck.diff_parser import GitDiffError, parse_staged_diff, SUPPORTED_EXTENSIONS
 from slopcheck.fixer import fix_source
-from slopcheck.license import check_pro_license
 from slopcheck.parser import detect_language
 from slopcheck.rules import (
     Violation,
@@ -25,15 +24,10 @@ from slopcheck.rules import (
 _JS_TS_LANGUAGES = frozenset({"javascript", "typescript", "tsx"})
 
 
-class ProRequiredError(Exception):
-    """Raised when an operation requires an active slopcheck Pro license."""
-
-
 @dataclass(frozen=True)
 class ScanSummary:
     violations: list[Violation]
     files_scanned: int
-    skipped_pro_files: tuple[str, ...] = ()
 
 
 @dataclass(frozen=True)
@@ -96,17 +90,9 @@ def _is_excluded(rel_path: str, exclude_patterns: tuple[str, ...]) -> bool:
 
 def _load_filtered_staged(
     repo_root: str | Path | None = None,
-    *,
-    is_pro: bool | None = None,
-) -> tuple[Path, SlopcheckConfig, dict[str, set[int]], bool]:
+) -> tuple[Path, SlopcheckConfig, dict[str, set[int]]]:
     start_dir = Path(repo_root).resolve() if repo_root else Path.cwd().resolve()
     root = get_git_toplevel(start_dir)
-    pro_active = check_pro_license().is_pro if is_pro is None else is_pro
-    if (root / ".slopcheck.toml").exists() and not pro_active:
-        raise ProRequiredError(
-            "Custom '.slopcheck.toml' configuration requires slopcheck Pro. "
-            "Run 'slopcheck activate <LICENSE_KEY>' to unlock."
-        )
     config = load_config(root)
     staged_map = parse_staged_diff(cwd=root, extensions=SUPPORTED_EXTENSIONS)
 
@@ -117,7 +103,7 @@ def _load_filtered_staged(
             if not _is_excluded(rel_path, config.exclude)
         }
 
-    return root, config, staged_map, pro_active
+    return root, config, staged_map
 
 
 def _scan_file_violations(
@@ -199,37 +185,14 @@ def _scan_file_violations(
 
 def scan_staged_with_summary(
     repo_root: str | Path | None = None,
-    *,
-    is_pro: bool | None = None,
 ) -> ScanSummary:
-    root, config, staged_map, pro_active = _load_filtered_staged(
-        repo_root, is_pro=is_pro
-    )
-
-    skipped_pro_files: tuple[str, ...] = ()
-    if not pro_active and staged_map:
-        skipped = [p for p in staged_map if detect_language(p) in _JS_TS_LANGUAGES]
-        if skipped:
-            skipped_pro_files = tuple(sorted(skipped))
-            staged_map = {
-                p: lines
-                for p, lines in staged_map.items()
-                if detect_language(p) not in _JS_TS_LANGUAGES
-            }
+    root, config, staged_map = _load_filtered_staged(repo_root)
 
     if not staged_map:
-        return ScanSummary(
-            violations=[],
-            files_scanned=0,
-            skipped_pro_files=skipped_pro_files,
-        )
+        return ScanSummary(violations=[], files_scanned=0)
 
     if VALID_RULE_IDS.issubset(config.disabled_rules):
-        return ScanSummary(
-            violations=[],
-            files_scanned=len(staged_map),
-            skipped_pro_files=skipped_pro_files,
-        )
+        return ScanSummary(violations=[], files_scanned=len(staged_map))
 
     has_py = any(detect_language(p) == "python" for p in staged_map)
     has_js = any(detect_language(p) in _JS_TS_LANGUAGES for p in staged_map)
@@ -262,11 +225,7 @@ def scan_staged_with_summary(
         )
 
     violations.sort(key=lambda v: (v.file_path, v.line, v.rule_id))
-    return ScanSummary(
-        violations=violations,
-        files_scanned=len(staged_map),
-        skipped_pro_files=skipped_pro_files,
-    )
+    return ScanSummary(violations=violations, files_scanned=len(staged_map))
 
 
 def scan_staged(repo_root: str | Path | None = None) -> tuple[list[Violation], int]:
@@ -294,19 +253,13 @@ def _has_unstaged_edits(
 
 
 def fix_staged(repo_root: str | Path | None = None) -> FixSummary:
-    is_pro = check_pro_license().is_pro
-    if not is_pro:
-        raise ProRequiredError(
-            "'--fix' auto-cleanup requires a Pro license. Run 'slopcheck activate <LICENSE_KEY>' to unlock."
-        )
-
-    root, config, staged_map, _ = _load_filtered_staged(repo_root, is_pro=True)
+    root, config, staged_map = _load_filtered_staged(repo_root)
 
     if not staged_map:
         return FixSummary(0, 0, 0, (), [])
 
     if {"obvious-comment", "filler-docstring"}.issubset(config.disabled_rules):
-        remaining = scan_staged_with_summary(repo_root=root, is_pro=True)
+        remaining = scan_staged_with_summary(repo_root=root)
         return FixSummary(len(staged_map), 0, 0, (), remaining.violations)
 
     files_fixed = 0
@@ -364,7 +317,7 @@ def fix_staged(repo_root: str | Path | None = None) -> FixSummary:
             files_fixed += 1
             total_fixes += result.fixes_applied
 
-    remaining = scan_staged_with_summary(repo_root=root, is_pro=True)
+    remaining = scan_staged_with_summary(repo_root=root)
 
     return FixSummary(
         files_scanned=len(staged_map),
